@@ -142,11 +142,13 @@ static void setup_and_start_timer(uint64_t milliseconds)
 	uint64_t timer_load;
 	uint32_t upper_load;
 	uint32_t lower_load;
-	//unsigned int zero = 0;
+	unsigned int zero = 0;
 	unsigned int data = 0;
-	timer_load = milliseconds*100000;
+	timer_load =zero - milliseconds*100000;
 	upper_load = (uint32_t) (0x00000000FFFFFFFF & (timer_load >> 32));
 	lower_load = (uint32_t) (0x00000000FFFFFFFF & timer_load);
+
+	printk(KERN_INFO "timer load je %llu, upper load je %u,lower load1 je %u\n",timer_load,upper_load,lower_load);
 
 	// Disable timer/counter while configuration is in progress
 	/*data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
@@ -326,7 +328,7 @@ ssize_t timer_read(struct file *pfile, char __user *buffer, size_t length, loff_
 	
 		vreme = (donji + (gornji2 << 32));	
 
-		vreme = do_div(vreme,10000000);		
+		vreme = do_div(vreme,100000000);		
 		dan1 = do_div(vreme,86400);
 		vreme = vreme - dan1*86400;
 		sat1 = do_div(vreme,3600);
@@ -341,6 +343,7 @@ ssize_t timer_read(struct file *pfile, char __user *buffer, size_t length, loff_
 		str[5] = ':';
 		str[6] = sekund1;
 	
+		printk(KERN_INFO "xiliaxitimer_write: Seting timer for %d days, %d hours, %d minutes and %d seconds.\n",dan1,sat1,minut1,sekund1);
 	}
 	len = scnprintf(buff,BUFF_SIZE , "%c", str[r]);
 	ret = copy_to_user(buffer, buff, len);
@@ -370,7 +373,7 @@ ssize_t timer_write(struct file *pfile, const char __user *buffer, size_t length
 		return -EFAULT;
 	buff[length] = '\0';
 
-	ret = sscanf(buff,"%d,%d,%d,%d",&dan,&sat,&minut,&sekund);
+	ret = sscanf(buff,"%d:%d:%d:%d",&dan,&sat,&minut,&sekund);
 	if(ret == 4)//4 parameters parsed in sscanf
 	{
 		printk(KERN_INFO "xiliaxitimer_write: Seting timer for %d days, %d hours, %d minutes and %d seconds.\n",dan,sat,minut,sekund);
@@ -378,16 +381,16 @@ ssize_t timer_write(struct file *pfile, const char __user *buffer, size_t length
 		setup_and_start_timer(millis);
 	}
 
-	if(strcmp(buff,"start") == 0)
+	if(strstr(buff,"start") == buff)
 	{
 		// Start Timer setting enable signal za oba brojaca
 		printk(KERN_INFO "xiliaxitimer_write: Timer started\n");
 		data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
-		iowrite32(data | XIL_AXI_TIMER_CSR_ENABLE_ALL_MASK,
+		iowrite32(data | XIL_AXI_TIMER_CSR_ENABLE_TMR_MASK,
 			tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
 	}
 
-	if(strcmp(buff,"stop") == 0)
+	if(strstr(buff,"stop") == buff)
 	{
 		printk(KERN_INFO "xiliaxitimer_write: Timer stoped\n");
 		data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
