@@ -129,7 +129,7 @@ static irqreturn_t xilaxitimer_isr(int irq,void*dev_id)
 			tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
 
 	
-	printk(KERN_NOTICE "Isteklo vreme. Disabling timers\n");
+	printk(KERN_NOTICE "Isteklo vreme.\n");
 	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
 	iowrite32(data & ~(XIL_AXI_TIMER_CSR_ENABLE_ALL_MASK), tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);//disable all
 		
@@ -375,28 +375,24 @@ ssize_t timer_write(struct file *pfile, const char __user *buffer, size_t length
 		setup_and_start_timer(millis);
 		printk(KERN_INFO "xiliaxitimer_write: Seting timer for %d days, %d hours, %d minutes and %d seconds.\n",dd,hh,mm,ss);
 	}
-	else
-	{
-		if(strstr(buff, "start")== buff)
-		{
-			// Start Timer bz setting enable signal
-			data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
-			iowrite32(data | XIL_AXI_TIMER_CSR_ENABLE_ALL_MASK,
-			tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
-			printk(KERN_INFO "start\n");
-		}
-		else if(strstr(buff, "stop")== buff)
-		{
-			data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
-			iowrite32(data & ~(XIL_AXI_TIMER_CSR_ENABLE_ALL_MASK), tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
-			printk(KERN_INFO "stop\n");
-		}
 
-		else
-		{
-			printk(KERN_WARNING "Wrong format\n");
-		}
+	if(strstr(buff,"start") == buff)
+	{
+		// Start Timer setting enable signal za oba brojaca
+		printk(KERN_INFO "xiliaxitimer_write: Timer started\n");
+		data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
+		iowrite32(data | XIL_AXI_TIMER_CSR_ENABLE_TMR_MASK,
+			tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
 	}
+
+	if(strstr(buff,"stop") == buff)
+	{
+		printk(KERN_INFO "xiliaxitimer_write: Timer stoped\n");
+		data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
+		iowrite32(data & ~(XIL_AXI_TIMER_CSR_ENABLE_TMR_MASK),
+			tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
+	}	
+
 	return length;
 }
 
