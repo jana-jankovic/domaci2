@@ -9,6 +9,7 @@
 #include <linux/uaccess.h>
 #include <linux/errno.h>
 #include <linux/device.h>
+#include <linux/math64.h>
 
 #include <linux/io.h> //iowrite ioread
 #include <linux/slab.h>//kmalloc kfree
@@ -19,9 +20,9 @@
 #include <linux/interrupt.h> //irqreturn_t, request_irq
 
 // REGISTER CONSTANTS
-#define XIL_AXI_TIMER_TCSR_OFFSET	0x0
-#define XIL_AXI_TIMER_TLR_OFFSET		0x4
-#define XIL_AXI_TIMER_TCR_OFFSET		0x8
+#define XIL_AXI_TIMER_TCSR0_OFFSET	0x0
+#define XIL_AXI_TIMER_TLR0_OFFSET		0x4
+#define XIL_AXI_TIMER_TCR0_OFFSET		0x8
 #define XIL_AXI_TIMER_TCSR1_OFFSET	0x10
 #define XIL_AXI_TIMER_TLR1_OFFSET		0x14
 #define XIL_AXI_TIMER_TCR1_OFFSET		0x18
@@ -61,18 +62,21 @@ static struct device *my_device;
 static struct cdev *my_cdev;
 static struct timer_info *tp = NULL;
 
-char str[10];
+
+char str[15];
 int endRead = 0;
 int r=0;
 int pom = 1;
-uint64_t gornji1 = 0;
-uint64_t donji = 0;
-uint64_t gornji2 = 0;
-uint64_t vreme = 0;
-int dan1 = 0;
-int sat1 = 0;
-int minut1 = 0;
-int sekund1 = 0;
+unsigned int dd = 0;
+unsigned int hh = 0;
+unsigned int mm = 0;
+unsigned int ss = 0;
+unsigned int seconds=0;
+uint64_t time=0;
+uint32_t time0=0;
+uint64_t time1=0;
+uint64_t time2=0;
+
 
 static irqreturn_t xilaxitimer_isr(int irq,void*dev_id);
 static void setup_and_start_timer(uint64_t milliseconds);
@@ -119,18 +123,17 @@ static irqreturn_t xilaxitimer_isr(int irq,void*dev_id)
 {      
 	unsigned int data = 0;
 
-	// Check Timer Counter Value
-	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCR_OFFSET);
-	printk(KERN_INFO "Isteklo vreme\n");
-
 	// Clear Interrupt
-	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
+	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
 	iowrite32(data | XIL_AXI_TIMER_CSR_INT_OCCURED_MASK,
-			tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
+			tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
 
-	// Disable Timer
-	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
-	iowrite32(data & ~(XIL_AXI_TIMER_CSR_ENABLE_TMR_MASK), tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
+	
+	printk(KERN_NOTICE "Isteklo vreme. Disabling timers\n");
+	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
+	iowrite32(data & ~(XIL_AXI_TIMER_CSR_ENABLE_ALL_MASK), tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);//disable all
+		
+
 	return IRQ_HANDLED;
 }
 //***************************************************
@@ -140,56 +143,50 @@ static void setup_and_start_timer(uint64_t milliseconds)
 {
 	// Disable Timer Counter
 	uint64_t timer_load;
-	uint32_t upper_load;
-	uint32_t lower_load;
-	unsigned int zero = 0;
+	uint32_t timer_load0;
+	uint32_t timer_load1;
+//	unsigned int zero = 0;
 	unsigned int data = 0;
-	timer_load =zero - milliseconds*100000;
-	upper_load = (uint32_t) (0x00000000FFFFFFFF & (timer_load >> 32));
-	lower_load = (uint32_t) (0x00000000FFFFFFFF & timer_load);
+	timer_load =  milliseconds*100000;
+	timer_load0=(uint32_t) (0x00000000FFFFFFFF & timer_load);
+	timer_load1=(uint32_t) (0x00000000FFFFFFFF & (timer_load >> 32));
 
-	printk(KERN_INFO "timer load je %llu, upper load je %u,lower load1 je %u\n",timer_load,upper_load,lower_load);
 
 	// Disable timer/counter while configuration is in progress
-	/*data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
+	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
 	iowrite32(data & ~(XIL_AXI_TIMER_CSR_ENABLE_ALL_MASK),
-			tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);*/
-	
-	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
-	iowrite32(data & ~(XIL_AXI_TIMER_CSR_ENABLE_TMR_MASK),
-			tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
-
-	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR1_OFFSET);
-	iowrite32(data & ~(XIL_AXI_TIMER_CSR_ENABLE_TMR_MASK),
-			tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
-
-	
-	// Aktivira kaskadni mod dva brojača
-	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
+			tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
+			
+	//Set CASCADE mode
+	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
 	iowrite32(data | XIL_AXI_TIMER_CSR_CASC_MASK,
-			tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
+			tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
 
-	//brojanje na nize
-	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
-	iowrite32(data & ~(XIL_AXI_TIMER_CSR_DOWN_COUNT_MASK),
-			tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
+	// Set initial values in load registers
+	iowrite32(timer_load0, tp->base_addr + XIL_AXI_TIMER_TLR0_OFFSET);
+	iowrite32(timer_load1, tp->base_addr + XIL_AXI_TIMER_TLR1_OFFSET);
 
-	// Set initial value in load register
-	iowrite32(lower_load, tp->base_addr + XIL_AXI_TIMER_TLR_OFFSET);
-	iowrite32(upper_load, tp->base_addr + XIL_AXI_TIMER_TLR1_OFFSET);
-
-	// Load initial value into counter from load register
-	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
+	// Load initial values into counters from load registers
+	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
 	iowrite32(data | XIL_AXI_TIMER_CSR_LOAD_MASK,
-			tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
+			tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
 
-	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
+	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
 	iowrite32(data & ~(XIL_AXI_TIMER_CSR_LOAD_MASK),
-			tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
+			tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
+	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR1_OFFSET);
+	iowrite32(data | XIL_AXI_TIMER_CSR_LOAD_MASK,
+			tp->base_addr + XIL_AXI_TIMER_TCSR1_OFFSET);
+	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR1_OFFSET);
+	iowrite32(data & ~(XIL_AXI_TIMER_CSR_LOAD_MASK),
+			tp->base_addr + XIL_AXI_TIMER_TCSR1_OFFSET);
+			
+	// Enable interrupts and autoreload, rest should be zero
+	iowrite32(XIL_AXI_TIMER_CSR_ENABLE_INT_MASK | XIL_AXI_TIMER_CSR_DOWN_COUNT_MASK | XIL_AXI_TIMER_CSR_CASC_MASK,
+			tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
 
-	// Enable interrupts, rest should be zero
-	iowrite32(XIL_AXI_TIMER_CSR_ENABLE_INT_MASK,
-			tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
+	
+
 }
 
 //***************************************************
@@ -268,9 +265,9 @@ static int timer_remove(struct platform_device *pdev)
 {
 	// Disable timer
 	unsigned int data=0;
-	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
-	iowrite32(data & ~(XIL_AXI_TIMER_CSR_ENABLE_TMR_MASK),
-			tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
+	data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
+	iowrite32(data & ~(XIL_AXI_TIMER_CSR_ENABLE_ALL_MASK),
+			tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
 	// Free resources taken in probe
 	free_irq(tp->irq_num, NULL);
 	iowrite32(0, tp->base_addr);
@@ -302,7 +299,6 @@ ssize_t timer_read(struct file *pfile, char __user *buffer, size_t length, loff_
 	int ret;
 	char buff[BUFF_SIZE];
 	long int len;
-	
 	if (endRead){
 		endRead = 0;
 		r = 0;
@@ -310,47 +306,46 @@ ssize_t timer_read(struct file *pfile, char __user *buffer, size_t length, loff_
 		printk(KERN_INFO "Succesfully read from file\n");
 		return 0;
 	}
-
+	
 	if(pom == 1)
 	{
-		pom = 0;
-		gornji1 = ioread32(tp->base_addr + XIL_AXI_TIMER_TCR1_OFFSET);
-		donji = ioread32(tp->base_addr + XIL_AXI_TIMER_TCR_OFFSET);
-		gornji2 = ioread32(tp->base_addr + XIL_AXI_TIMER_TCR1_OFFSET);
-
-		if(gornji1 != gornji2)
-		{
-			donji = ioread32(tp->base_addr + XIL_AXI_TIMER_TCR_OFFSET);
-			gornji2 = ioread32(tp->base_addr + XIL_AXI_TIMER_TCR1_OFFSET);			
-		}
-		
-		
-	
-		vreme = (donji + (gornji2 << 32));	
-
-		vreme = do_div(vreme,100000000);		
-		dan1 = do_div(vreme,86400);
-		vreme = vreme - dan1*86400;
-		sat1 = do_div(vreme,3600);
-		vreme = vreme - sat1*3600;
-		minut1 = do_div(vreme,60);
-		sekund1 = vreme - minut1*60;
-		str[0] = dan1;
-		str[1] = ':';
-		str[2] = sat1;
-		str[3] = ':';
-		str[4] = minut1;
-		str[5] = ':';
-		str[6] = sekund1;
-	
-		printk(KERN_INFO "xiliaxitimer_write: Seting timer for %d days, %d hours, %d minutes and %d seconds.\n",dan1,sat1,minut1,sekund1);
+	pom = 0;
+	time1 =((uint64_t)(ioread32(tp->base_addr + XIL_AXI_TIMER_TCR1_OFFSET)))<<32;
+	time0 = ioread32(tp->base_addr + XIL_AXI_TIMER_TCR0_OFFSET);
+	time2 =((uint64_t)(ioread32(tp->base_addr + XIL_AXI_TIMER_TCR1_OFFSET)))<<32;
+	if(time2 != time1)
+	{
+		time0 = ioread32(tp->base_addr + XIL_AXI_TIMER_TCR0_OFFSET);
+		time1 =((uint64_t)(ioread32(tp->base_addr + XIL_AXI_TIMER_TCR1_OFFSET)))<<32;
 	}
+	time = time1+time0;
+	seconds=div_u64(time,100000000);
+	dd=seconds/86400;
+	seconds=seconds-dd*86400;
+	hh=seconds/3600;
+	seconds=seconds-hh*3600;
+	mm=seconds/60;
+	ss=seconds-mm*60;
+	str[0] = 48 + dd/10;
+	str[1] = 48 + dd%10;
+	str[2] = ':';
+	str[3] = 48 + hh/10;
+	str[4] = 48 + hh%10;
+	str[5] = ':';
+	str[6] =48 + mm/10;
+	str[7] =48 + mm%10;
+	str[8] = ':';
+	str[9] = 48 + ss/10;
+	str[10] = 48 + ss%10;
+	
+	}
+	
 	len = scnprintf(buff,BUFF_SIZE , "%c", str[r]);
 	ret = copy_to_user(buffer, buff, len);
 	if(ret)
 		return -EFAULT;
 	r ++;
-	if (r == 7) {
+	if (r == 11) {
 		endRead = 1;
 	}
 	
@@ -360,46 +355,49 @@ ssize_t timer_read(struct file *pfile, char __user *buffer, size_t length, loff_
 
 ssize_t timer_write(struct file *pfile, const char __user *buffer, size_t length, loff_t *offset) 
 {
-	unsigned int data = 0;
 	char buff[BUFF_SIZE];
-	int dan = 0;
-	int sat = 0;
-	int minut = 0;
-	int sekund = 0;
+	 int dd = 0;
+	int hh = 0;
+	int mm = 0;
+	int ss = 0;
+	unsigned long millis = 0;
 	int ret = 0;
-	uint64_t millis = 0;
+	unsigned int data = 0;
 	ret = copy_from_user(buff, buffer, length);
 	if(ret)
 		return -EFAULT;
 	buff[length] = '\0';
 
-	ret = sscanf(buff,"%d:%d:%d:%d",&dan,&sat,&minut,&sekund);
-	if(ret == 4)//4 parameters parsed in sscanf
+	ret = sscanf(buff,"%d:%d:%d:%d",&dd,&hh,&mm,&ss);
+	if(ret == 4)//four parameters parsed in sscanf
 	{
-		printk(KERN_INFO "xiliaxitimer_write: Seting timer for %d days, %d hours, %d minutes and %d seconds.\n",dan,sat,minut,sekund);
-		millis = sekund*1000 + minut*60000 + sat*3600000 + dan*86400000; 
+		millis=1000*(ss+60*mm+3600*hh+86400*dd);
 		setup_and_start_timer(millis);
+		printk(KERN_INFO "xiliaxitimer_write: Seting timer for %d days, %d hours, %d minutes and %d seconds.\n",dd,hh,mm,ss);
 	}
-
-	if(strstr(buff,"start") == buff)
+	else
 	{
-		// Start Timer setting enable signal za oba brojaca
-		printk(KERN_INFO "xiliaxitimer_write: Timer started\n");
-		data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
-		iowrite32(data | XIL_AXI_TIMER_CSR_ENABLE_TMR_MASK,
-			tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
-	}
+		if(strstr(buff, "start")== buff)
+		{
+			// Start Timer bz setting enable signal
+			data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
+			iowrite32(data | XIL_AXI_TIMER_CSR_ENABLE_ALL_MASK,
+			tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
+			printk(KERN_INFO "start\n");
+		}
+		else if(strstr(buff, "stop")== buff)
+		{
+			data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
+			iowrite32(data & ~(XIL_AXI_TIMER_CSR_ENABLE_ALL_MASK), tp->base_addr + XIL_AXI_TIMER_TCSR0_OFFSET);
+			printk(KERN_INFO "stop\n");
+		}
 
-	if(strstr(buff,"stop") == buff)
-	{
-		printk(KERN_INFO "xiliaxitimer_write: Timer stoped\n");
-		data = ioread32(tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
-		iowrite32(data & ~(XIL_AXI_TIMER_CSR_ENABLE_TMR_MASK),
-			tp->base_addr + XIL_AXI_TIMER_TCSR_OFFSET);
+		else
+		{
+			printk(KERN_WARNING "Wrong format\n");
+		}
 	}
-	
 	return length;
-
 }
 
 //***************************************************
